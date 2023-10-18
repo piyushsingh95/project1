@@ -175,7 +175,7 @@ process.on('SIGINT', () => {
     });
   });
 
-app.get('/home', (req, res) => {
+app.get('/', (req, res) => {
     res.status(200).json({ message: 'Code is working' });
   });
 // Start the Express server
