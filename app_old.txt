@@ -1,0 +1,223 @@
+const express = require('express');
+const bodyParser = require('body-parser');
+const { MongoClient } = require('mongodb');
+const admin = require('firebase-admin');
+const serviceAccount = require('./serviceAccountKey.json');
+const { S3Client, CreatePresignedPostCommand } = require("@aws-sdk/client-s3");
+const { S3 } = require("@aws-sdk/s3-request-presigner");
+
+
+
+// AWS S3 configuration
+const s3Client = new S3Client({
+  region: "ap-south-1", // Replace with your desired AWS region
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
+// Initialize MongoDB connection
+const mongoUri = 'mongodb+srv://dev:fbfPX4LEtlosgPAF@cluster0.8dhfuev.mongodb.net/';
+const dbName = 'cardsdb';
+const collectionName = 'cards';
+const mongoClient = new MongoClient(mongoUri);
+
+async function connectToMongoDB() {
+  try {
+    await mongoClient.connect();
+    console.log('Connected to MongoDB');
+  } catch (error) {
+    console.error('Error connecting to MongoDB:', error);
+  }
+}
+connectToMongoDB();
+
+const app = express();
+const port = process.env.PORT || 3001;
+
+app.use(express.json());
+
+/*
+// Middleware for verifying Firebase access token and checking UID in MongoDB
+app.use(async (req, res, next) => {
+  try {
+    const { accessToken } = req.body;
+
+    const decodedToken = await admin.auth().verifyIdToken(accessToken);
+
+    req.decodedToken = decodedToken;
+
+    const uid = decodedToken.uid;
+
+    const user = await mongoClient.db(dbName).collection(collectionName).findOne({ uid });
+
+    // If the UID exists, attach user data to the request
+    if (user) {
+      req.user = user;
+    }
+
+    next();
+  } catch (error) {
+    console.error(error);
+    res.status(401).json({ message: 'Invalid access token' });
+  }
+});
+*/
+app.use(bodyParser.json());
+const verifyFirebaseToken = (req, res, next) => {
+    const accessToken = req.body.accessToken;
+  
+    if (!accessToken) {
+      console.error("No access token found in the request.");
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+  
+    admin
+      .auth()
+      .verifyIdToken(accessToken)
+      .then((decodedToken) => {
+        console.log("Token verified. UID:", decodedToken.uid);
+        next();
+      })
+      .catch((error) => {
+        console.error("Error verifying token:", error);
+        return res.status(401).json({ error: "Unauthorized" });
+      });
+  };
+  
+  app.post("/verify-access-token", verifyFirebaseToken, (req, res) => {
+    res.json({ message: "Access token is valid"}),
+    console.log("Token verified. UID:", decodedToken.uid);
+
+  });
+
+  
+
+
+// API endpoint for verifying the access token
+app.post('/verify-token', async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user) {
+      res.status(200).json({ success: true, user });
+    } else {
+      res.status(404).json({ success: false, message: 'User not found' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/create-certificate', async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user) {
+      res.status(200).json({ success: true, message: 'Certificate created successfully' });
+    } else {
+      res.status(404).json({ success: false, message: 'User not found' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API endpoint for creating badges
+app.post('/create-badge', async (req, res) => {
+  try {
+    const user = req.user;
+    if (user) {
+      res.status(200).json({ success: true, message: 'Badge created successfully' });
+    } else {
+      res.status(404).json({ success: false, message: 'User not found' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/fetch-certificate-badge', async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user) {
+      const data = {
+        id: user.uid,
+        name: 'Certificate 1',
+        metadata: 'Certificate metadata',
+      };
+
+      res.status(200).json({ success: true, data });
+    } else {
+      res.status(404).json({ success: false, message: 'User not found' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+async function generatePresignedPostUrl(bucket, fileName, expiresInSeconds) {
+  const presigner = new S3();
+  const expiration = new Date();
+  expiration.setSeconds(expiration.getSeconds() + expiresInSeconds);
+
+  const params = {
+    Bucket: bucket,
+    Fields: {
+      key: fileName,
+    },
+    Conditions: [
+      ["content-length-range", 0, 20971520], // 20mb
+    ],
+    Expires: expiration,
+  };
+
+  try {
+    // Generate the pre-signed POST URL
+    const command = new CreatePresignedPostCommand(params);
+    const url = await presigner.presign(command);
+
+    return url;
+  } catch (error) {
+    console.error("Error generating pre-signed URL:", error);
+    throw error;
+  }
+}
+
+// API endpoint for generating pre-signed URL for client-side file upload
+app.post('/generate-presigned-url', async (req, res) => {
+  try {
+    const { bucket, fileName, expiresInSeconds } = req.body;
+
+    // Call the function to generate the pre-signed URL
+    const presignedUrl = await generatePresignedPostUrl(bucket, fileName, expiresInSeconds);
+
+    // Respond with the generated pre-signed URL
+    res.status(200).json({ success: true, presignedUrl });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+process.on('SIGINT', () => {
+  mongoClient.close().then(() => {
+    console.log('MongoDB connection closed.');
+    process.exit(0);
+  });
+});
+
+// Start the Express server
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
