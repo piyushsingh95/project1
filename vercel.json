@@ -1,5 +1,5 @@
 {
-    "version": 32.4,
+    "version": 32,
     "builds": [
       {
         "src": "./app.js",
